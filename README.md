@@ -2,12 +2,24 @@
 
 One-script macOS terminal environment setup. Run on a fresh Mac, get a fully configured terminal in minutes.
 
+**🇨🇳 [中文版文档](README_CN.md)**
+
 <p align="center">
-  <img src="assets/ghostty.png" width="120" alt="Ghostty">
-  &nbsp;&nbsp;&nbsp;
-  <img src="assets/fish.png" width="120" alt="Fish Shell">
-  &nbsp;&nbsp;&nbsp;
-  <img src="assets/starship.png" width="120" alt="Starship">
+  <img src="assets/ghostty.png" width="80" alt="Ghostty">
+  &nbsp;&nbsp;
+  <img src="assets/fish.png" width="80" alt="Fish Shell">
+  &nbsp;&nbsp;
+  <img src="assets/zsh.png" width="80" alt="Zsh">
+  &nbsp;&nbsp;
+  <img src="assets/starship.png" width="80" alt="Starship">
+  &nbsp;&nbsp;
+  <img src="assets/fnm.svg" width="80" alt="fnm">
+  &nbsp;&nbsp;
+  <img src="assets/bat.svg" width="80" alt="bat">
+  &nbsp;&nbsp;
+  <img src="assets/fzf.png" width="80" alt="fzf">
+  &nbsp;&nbsp;
+  <img src="assets/btop.png" width="80" alt="btop">
 </p>
 
 ## Quick Start
@@ -170,8 +182,8 @@ For 3 plugins, a plugin manager is overkill:
 The killer reasons:
 1. **Speed:** nvm adds 200-400ms to shell startup. fnm adds ~1ms. This matters when you open terminals frequently.
 2. **Unified:** One tool, one Node install location (`~/.local/share/fnm/`), works identically in Fish and Zsh. With nvm, you'd need nvm-sh for Zsh and nvm.fish for Fish — two different tools with incompatible storage paths.
-3. **Auto-switch:** `fnm env --use-on-cd` reads `.node-version` or `.nvmrc` files and switches automatically. No extra hooks needed.
-4. **nvm.fish is a community project**, not official nvm. It works well but it's another dependency with its own quirks (like needing `set --global nvm_data` and `set --universal nvm_default_version`).
+3. **Auto-switch:** `fnm env --use-on-cd` reads `.node-version` or `.nvmrc` files and switches automatically when you `cd` into a project. No extra hooks needed.
+4. **nvm.fish is a community project**, not official nvm. It works well but it's another dependency with its own quirks (custom `nvm_data` path, `set --universal nvm_default_version`).
 
 If you have existing `.nvmrc` files in your projects, fnm reads them — fully compatible.
 
