@@ -171,6 +171,16 @@ echo -e "${BOLD}═════════════════════�
 echo -e "${BOLD}  📦 Step 7/7: Deploying Configs${NC}"
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
 
+# Ghostty config
+GHOSTTY_CONFIG_DIR="$HOME/Library/Application Support/com.mitchellh.ghostty"
+mkdir -p "$GHOSTTY_CONFIG_DIR"
+if [[ -f "$GHOSTTY_CONFIG_DIR/config.ghostty" ]]; then
+    cp "$GHOSTTY_CONFIG_DIR/config.ghostty" "$GHOSTTY_CONFIG_DIR/config.ghostty.bak.$(date +%s)"
+    warn "Backed up existing Ghostty config"
+fi
+cp "$CONFIGS_DIR/ghostty.config" "$GHOSTTY_CONFIG_DIR/config.ghostty"
+success "Ghostty config deployed"
+
 # Fish config
 FISH_CONFIG_DIR="$HOME/.config/fish"
 mkdir -p "$FISH_CONFIG_DIR"
