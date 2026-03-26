@@ -1,6 +1,6 @@
 # 🖥️ terminal-setup
 
-One-script macOS terminal environment setup. Run on a fresh Mac, get a fully configured terminal in minutes.
+One-script terminal environment setup for **macOS**, **Debian/Ubuntu**, and **Windows (WSL)**. Run on a fresh machine, get a fully configured terminal in minutes.
 
 **🇨🇳 [中文版文档](README_CN.md)**
 
@@ -18,18 +18,51 @@ One-script macOS terminal environment setup. Run on a fresh Mac, get a fully con
   <img src="assets/demo-2x.gif" width="600" alt="Demo">
 </p>
 
+## Supported Platforms
+
+| Platform | Status | Package Manager |
+|----------|--------|----------------|
+| 🍎 **macOS** | ✅ Full support | Homebrew |
+| 🐧 **Debian / Ubuntu** | ✅ Full support | apt + GitHub releases |
+| 🪟 **Windows (WSL)** | ✅ Full support | apt (inside WSL) |
+| 🪟 **Windows (native)** | ⛔ Not supported | Use WSL instead |
+
 ## Quick Start
+
+### macOS
 
 ```bash
 git clone https://github.com/lewislulu/terminal-setup.git
 cd terminal-setup && ./setup.sh
 ```
 
-The script asks you to choose Fish or Zsh. Or pick directly:
+### Debian / Ubuntu
 
 ```bash
-./setup.sh --fish    # Fish shell
-./setup.sh --zsh     # Zsh + fish-like plugins
+git clone https://github.com/lewislulu/terminal-setup.git
+cd terminal-setup && ./setup.sh
+```
+
+### Windows (WSL)
+
+First install WSL if you haven't:
+```powershell
+# In PowerShell (Admin)
+wsl --install
+```
+
+Then inside WSL:
+```bash
+git clone https://github.com/lewislulu/terminal-setup.git
+cd terminal-setup && ./setup.sh
+```
+
+### Options
+
+```bash
+./setup.sh --fish       # Fish shell
+./setup.sh --zsh        # Zsh + fish-like plugins
+./setup.sh --dry-run    # Preview what would be done (no changes)
 ```
 
 One-liner (auto-clones):
@@ -72,14 +105,33 @@ bash <(curl -fsSL https://raw.githubusercontent.com/lewislulu/terminal-setup/mai
 
 ## What It Does
 
-1. Installs **Homebrew** (if needed)
-2. Installs **Ghostty** terminal
+1. Installs **package manager** (Homebrew on macOS, apt on Linux)
+2. Installs **Ghostty** terminal (macOS; Linux users install separately)
 3. Downloads **MesloLGS NF** nerd fonts
 4. Installs your **shell** of choice + plugins
-5. Installs all **CLI tools** via Homebrew (including fzf)
+5. Installs all **CLI tools** (Homebrew on macOS, apt + GitHub releases on Linux)
 6. Installs **Starship** prompt with Catppuccin Mocha config
 7. Installs **fnm** + **Node.js** LTS
 8. Deploys all config files (existing configs are backed up with timestamps)
+
+## Platform Notes
+
+### macOS
+- Full support, everything installs via Homebrew
+- Ghostty installs as a native macOS app
+
+### Debian / Ubuntu
+- CLI tools install via apt where available, GitHub releases for others (delta, lazygit, eza)
+- `bat` → `batcat`, `fd` → `fdfind` — symlinks are created automatically
+- Fonts install to `~/.local/share/fonts/`
+- Ghostty is not in apt — install manually via [snap, build from source](https://ghostty.org/docs/install), or use another terminal
+- Zsh plugins install via apt or git clone
+
+### Windows (WSL)
+- Everything runs inside WSL (Ubuntu/Debian layer)
+- Terminal emulator runs on the Windows side — use [Windows Terminal](https://aka.ms/terminal) or [Ghostty for Windows](https://ghostty.org)
+- Script detects WSL automatically and adapts
+- If run in native Windows (MINGW/Git Bash), the script will prompt you to install WSL
 
 ## Aliases / Abbreviations
 
@@ -163,6 +215,8 @@ For 3 plugins, a plugin manager is overkill:
 
 **Rule of thumb:** If you have <5 plugins, Homebrew direct install. If you have 10+, consider antidote or sheldon.
 
+> **On Linux:** Zsh plugins install via apt (`zsh-autosuggestions`, `zsh-syntax-highlighting` packages) or git clone as fallback.
+
 ### Why fnm over nvm?
 
 | | fnm | nvm |
@@ -172,7 +226,7 @@ For 3 plugins, a plugin manager is overkill:
 | **Fish support** | ✅ Native | ❌ Needs nvm.fish (separate project) |
 | **Zsh support** | ✅ Native | ✅ Native |
 | **Auto-switch** | ✅ `--use-on-cd` (reads `.node-version`, `.nvmrc`) | ⚠️ Needs hook script |
-| **Install** | `brew install fnm` | curl script, modifies shell rc |
+| **Install** | `brew install fnm` / `curl` | curl script, modifies shell rc |
 | **Shared across shells** | ✅ Same Node installs for Fish & Zsh | ❌ nvm.fish and nvm-sh use different paths |
 
 The killer reasons:

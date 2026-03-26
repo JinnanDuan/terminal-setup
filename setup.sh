@@ -1,6 +1,8 @@
 #!/bin/bash
 #
-# terminal-setup — One-script Mac terminal environment setup
+# terminal-setup — One-script terminal environment setup
+#
+# Platforms: macOS, Debian/Ubuntu, Windows (via WSL)
 #
 # Stack: Ghostty + (Fish or Zsh) + Starship + Nerd Font (MesloLGS)
 # Tools: bat, eza, fd, ripgrep, btop, zoxide, jq, tldr, delta, lazygit, fzf
@@ -11,6 +13,7 @@
 #   ./setup.sh              # interactive shell choice
 #   ./setup.sh --fish       # use Fish
 #   ./setup.sh --zsh        # use Zsh (with fish-like plugins)
+#   ./setup.sh --dry-run    # preview what would be done (no changes)
 #
 
 set -euo pipefail
@@ -23,20 +26,89 @@ BLUE='\033[0;34m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+# ─── Dry-run support ────────────────────────────────────────────────
+DRY_RUN=false
+
 info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
 success() { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
-# ─── Shell Choice ────────────────────────────────────────────────────
+# run_cmd: execute a command, or just print it in dry-run mode
+run_cmd() {
+    if $DRY_RUN; then
+        echo -e "${YELLOW}[DRY-RUN]${NC} $*"
+    else
+        "$@"
+    fi
+}
+
+# ─── Parse Arguments ────────────────────────────────────────────────
 SHELL_CHOICE=""
 for arg in "$@"; do
     case "$arg" in
-        --fish) SHELL_CHOICE="fish" ;;
-        --zsh)  SHELL_CHOICE="zsh" ;;
+        --fish)    SHELL_CHOICE="fish" ;;
+        --zsh)     SHELL_CHOICE="zsh" ;;
+        --dry-run) DRY_RUN=true ;;
     esac
 done
 
+if $DRY_RUN; then
+    echo ""
+    echo -e "${YELLOW}${BOLD}  ⚠  DRY-RUN MODE — no changes will be made${NC}"
+    echo ""
+fi
+
+# ─── OS Detection ───────────────────────────────────────────────────
+# Possible values: macos, debian, wsl, unsupported
+detect_os() {
+    local uname_out
+    uname_out="$(uname -s)"
+
+    case "$uname_out" in
+        Darwin)
+            echo "macos"
+            ;;
+        Linux)
+            # Check if running inside WSL
+            if grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null; then
+                echo "wsl"
+            elif [[ -f /etc/debian_version ]] || grep -qi 'debian\|ubuntu' /etc/os-release 2>/dev/null; then
+                echo "debian"
+            else
+                echo "unsupported"
+            fi
+            ;;
+        MINGW*|MSYS*|CYGWIN*)
+            echo "windows-native"
+            ;;
+        *)
+            echo "unsupported"
+            ;;
+    esac
+}
+
+OS="$(detect_os)"
+
+case "$OS" in
+    macos)
+        info "Detected ${BOLD}macOS${NC}"
+        ;;
+    debian)
+        info "Detected ${BOLD}Debian/Ubuntu Linux${NC}"
+        ;;
+    wsl)
+        info "Detected ${BOLD}Windows WSL${NC} (Debian/Ubuntu layer)"
+        ;;
+    windows-native)
+        error "Native Windows (MINGW/MSYS/Cygwin) is not supported.\n  Please install WSL: https://learn.microsoft.com/en-us/windows/wsl/install\n  Then run this script inside WSL."
+        ;;
+    *)
+        error "Unsupported OS: $(uname -s)\n  This script supports macOS, Debian/Ubuntu, and Windows WSL."
+        ;;
+esac
+
+# ─── Shell Choice ────────────────────────────────────────────────────
 if [[ -z "$SHELL_CHOICE" ]]; then
     echo ""
     echo -e "${BOLD}Which shell do you want to use?${NC}"
@@ -55,11 +127,9 @@ if [[ -z "$SHELL_CHOICE" ]]; then
 fi
 
 echo ""
-info "Setting up with ${BOLD}${SHELL_CHOICE}${NC}"
+info "Setting up with ${BOLD}${SHELL_CHOICE}${NC} on ${BOLD}${OS}${NC}"
 
-# ─── Pre-flight ──────────────────────────────────────────────────────
-[[ "$(uname)" != "Darwin" ]] && error "This script is for macOS only."
-
+# ─── Config Directory ───────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIGS_DIR="$SCRIPT_DIR/configs"
 
@@ -72,34 +142,122 @@ if [[ ! -d "$CONFIGS_DIR" ]]; then
     CONFIGS_DIR="$SCRIPT_DIR/configs"
 fi
 
-# ─── Step 1: Homebrew ───────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# Helper Functions (cross-platform)
+# ═══════════════════════════════════════════════════════════════════════
+
+# Install a package using the appropriate package manager
+pkg_install() {
+    local pkg="$1"
+    case "$OS" in
+        macos)
+            if brew list "$pkg" &>/dev/null; then
+                success "$pkg already installed"
+                return 0
+            fi
+            info "Installing $pkg..."
+            run_cmd brew install "$pkg"
+            ;;
+        debian|wsl)
+            if dpkg -s "$pkg" &>/dev/null 2>&1; then
+                success "$pkg already installed"
+                return 0
+            fi
+            info "Installing $pkg..."
+            run_cmd sudo apt-get install -y "$pkg"
+            ;;
+    esac
+    success "$pkg installed"
+}
+
+# Install a cask (macOS only, no-op on Linux)
+cask_install() {
+    local cask="$1"
+    if [[ "$OS" != "macos" ]]; then
+        warn "Cask install is macOS-only, skipping $cask on $OS"
+        return 0
+    fi
+    if brew list --cask "$cask" &>/dev/null; then
+        success "$cask already installed"
+        return 0
+    fi
+    info "Installing $cask..."
+    run_cmd brew install --cask "$cask"
+    success "$cask installed"
+}
+
+# Check if a command exists
+has_cmd() {
+    command -v "$1" &>/dev/null
+}
+
+# ─── Step 1: Package Manager ────────────────────────────────────────
 echo ""
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
-echo -e "${BOLD}  🍺 Step 1/8: Homebrew${NC}"
+echo -e "${BOLD}  📦 Step 1/8: Package Manager${NC}"
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
 
-if ! command -v brew &>/dev/null; then
-    info "Installing Homebrew..."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-    success "Homebrew installed"
-else
-    success "Homebrew already installed"
-fi
+case "$OS" in
+    macos)
+        if ! has_cmd brew; then
+            info "Installing Homebrew..."
+            run_cmd /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+            success "Homebrew installed"
+        else
+            success "Homebrew already installed"
+        fi
+        ;;
+    debian|wsl)
+        info "Updating apt package index..."
+        run_cmd sudo apt-get update
+        # Ensure basic build tools are available
+        pkg_install "curl"
+        pkg_install "git"
+        pkg_install "wget"
+        pkg_install "unzip"
+        pkg_install "build-essential"
+        success "apt package manager ready"
+        ;;
+esac
 
-# ─── Step 2: Ghostty ────────────────────────────────────────────────
+# ─── Step 2: Terminal Emulator ───────────────────────────────────────
 echo ""
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
-echo -e "${BOLD}  👻 Step 2/8: Ghostty Terminal${NC}"
+echo -e "${BOLD}  👻 Step 2/8: Terminal Emulator${NC}"
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
 
-if [[ ! -d "/Applications/Ghostty.app" ]]; then
-    info "Installing Ghostty..."
-    brew install --cask ghostty
-    success "Ghostty installed"
-else
-    success "Ghostty already installed"
-fi
+case "$OS" in
+    macos)
+        if [[ ! -d "/Applications/Ghostty.app" ]]; then
+            info "Installing Ghostty..."
+            run_cmd brew install --cask ghostty
+            success "Ghostty installed"
+        else
+            success "Ghostty already installed"
+        fi
+        ;;
+    debian)
+        # Ghostty on Linux: check if already installed, otherwise try snap/flatpak or skip
+        if has_cmd ghostty; then
+            success "Ghostty already installed"
+        else
+            warn "Ghostty is not easily available on Linux via apt."
+            echo -e "  Options to install Ghostty on Linux:"
+            echo -e "    • Snap:    ${BOLD}sudo snap install ghostty${NC}"
+            echo -e "    • Build:   ${BOLD}https://ghostty.org/docs/install/build${NC}"
+            echo -e "    • Or use any other terminal (kitty, alacritty, etc.)"
+            echo ""
+            info "Skipping Ghostty installation — install it manually if desired."
+        fi
+        ;;
+    wsl)
+        info "WSL detected — terminal emulator runs on the Windows side."
+        echo -e "  Install Ghostty for Windows: ${BOLD}https://ghostty.org${NC}"
+        echo -e "  Or use Windows Terminal, which works great with WSL."
+        info "Skipping terminal emulator installation."
+        ;;
+esac
 
 # ─── Step 3: Nerd Font (MesloLGS NF) ────────────────────────────────
 echo ""
@@ -107,7 +265,16 @@ echo -e "${BOLD}═════════════════════�
 echo -e "${BOLD}  🔤 Step 3/8: Nerd Font (MesloLGS NF)${NC}"
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
 
-FONT_DIR="$HOME/Library/Fonts"
+# Determine font directory based on OS
+case "$OS" in
+    macos)
+        FONT_DIR="$HOME/Library/Fonts"
+        ;;
+    debian|wsl)
+        FONT_DIR="$HOME/.local/share/fonts"
+        ;;
+esac
+
 MESLO_BASE_URL="https://github.com/romkatv/powerlevel10k-media/raw/master"
 MESLO_FONTS=(
     "MesloLGS NF Regular.ttf"
@@ -128,8 +295,14 @@ else
     mkdir -p "$FONT_DIR"
     for font in "${MESLO_FONTS[@]}"; do
         encoded=$(echo "$font" | sed 's/ /%20/g')
-        curl -fsSL "$MESLO_BASE_URL/$encoded" -o "$FONT_DIR/$font"
+        run_cmd curl -fsSL "$MESLO_BASE_URL/$encoded" -o "$FONT_DIR/$font"
     done
+    # Rebuild font cache on Linux
+    if [[ "$OS" == "debian" || "$OS" == "wsl" ]]; then
+        if has_cmd fc-cache; then
+            run_cmd fc-cache -fv "$FONT_DIR"
+        fi
+    fi
     success "MesloLGS NF fonts installed"
 fi
 
@@ -143,50 +316,139 @@ else
 fi
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
 
-if [[ "$SHELL_CHOICE" == "fish" ]]; then
-    if ! command -v fish &>/dev/null; then
-        info "Installing Fish..."
-        brew install fish
-        success "Fish installed"
-    else
-        success "Fish already installed"
-    fi
-
-    FISH_PATH="$(which fish)"
-    if ! grep -qxF "$FISH_PATH" /etc/shells 2>/dev/null; then
-        info "Adding Fish to /etc/shells (may need sudo)..."
-        echo "$FISH_PATH" | sudo tee -a /etc/shells >/dev/null
-    fi
-
-    if [[ "$SHELL" != "$FISH_PATH" ]]; then
-        info "Setting Fish as default shell..."
-        chsh -s "$FISH_PATH"
-        success "Default shell changed to Fish"
-    else
-        success "Fish is already the default shell"
-    fi
-else
-    # Zsh is pre-installed on macOS, just install the plugins
-    ZSH_PLUGINS=(zsh-autosuggestions zsh-syntax-highlighting zsh-completions)
-    for plugin in "${ZSH_PLUGINS[@]}"; do
-        if brew list "$plugin" &>/dev/null; then
-            success "$plugin already installed"
+install_shell_macos() {
+    if [[ "$SHELL_CHOICE" == "fish" ]]; then
+        if ! has_cmd fish; then
+            info "Installing Fish..."
+            run_cmd brew install fish
+            success "Fish installed"
         else
-            info "Installing $plugin..."
-            brew install "$plugin"
-            success "$plugin installed"
+            success "Fish already installed"
         fi
-    done
 
-    ZSH_PATH="$(which zsh)"
-    if [[ "$SHELL" != "$ZSH_PATH" ]]; then
-        info "Setting Zsh as default shell..."
-        chsh -s "$ZSH_PATH"
-        success "Default shell changed to Zsh"
+        FISH_PATH="$(which fish)"
+        if ! grep -qxF "$FISH_PATH" /etc/shells 2>/dev/null; then
+            info "Adding Fish to /etc/shells (may need sudo)..."
+            echo "$FISH_PATH" | sudo tee -a /etc/shells >/dev/null
+        fi
+
+        if [[ "$SHELL" != "$FISH_PATH" ]]; then
+            info "Setting Fish as default shell..."
+            run_cmd chsh -s "$FISH_PATH"
+            success "Default shell changed to Fish"
+        else
+            success "Fish is already the default shell"
+        fi
     else
-        success "Zsh is already the default shell"
+        # Zsh is pre-installed on macOS, just install the plugins
+        local plugins=(zsh-autosuggestions zsh-syntax-highlighting zsh-completions)
+        for plugin in "${plugins[@]}"; do
+            if brew list "$plugin" &>/dev/null; then
+                success "$plugin already installed"
+            else
+                info "Installing $plugin..."
+                run_cmd brew install "$plugin"
+                success "$plugin installed"
+            fi
+        done
+
+        ZSH_PATH="$(which zsh)"
+        if [[ "$SHELL" != "$ZSH_PATH" ]]; then
+            info "Setting Zsh as default shell..."
+            run_cmd chsh -s "$ZSH_PATH"
+            success "Default shell changed to Zsh"
+        else
+            success "Zsh is already the default shell"
+        fi
     fi
-fi
+}
+
+install_shell_linux() {
+    if [[ "$SHELL_CHOICE" == "fish" ]]; then
+        if ! has_cmd fish; then
+            # Fish PPA for latest version on Ubuntu/Debian
+            if [[ -f /etc/lsb-release ]] && grep -qi ubuntu /etc/lsb-release 2>/dev/null; then
+                info "Adding Fish PPA for latest version..."
+                run_cmd sudo apt-add-repository -y ppa:fish-shell/release-3
+                run_cmd sudo apt-get update
+            fi
+            info "Installing Fish..."
+            run_cmd sudo apt-get install -y fish
+            success "Fish installed"
+        else
+            success "Fish already installed"
+        fi
+
+        FISH_PATH="$(which fish)"
+        if ! grep -qxF "$FISH_PATH" /etc/shells 2>/dev/null; then
+            info "Adding Fish to /etc/shells..."
+            echo "$FISH_PATH" | sudo tee -a /etc/shells >/dev/null
+        fi
+
+        if [[ "$SHELL" != "$FISH_PATH" ]]; then
+            info "Setting Fish as default shell..."
+            run_cmd chsh -s "$FISH_PATH"
+            success "Default shell changed to Fish"
+        else
+            success "Fish is already the default shell"
+        fi
+    else
+        # Install Zsh if not present
+        if ! has_cmd zsh; then
+            info "Installing Zsh..."
+            run_cmd sudo apt-get install -y zsh
+            success "Zsh installed"
+        else
+            success "Zsh already installed"
+        fi
+
+        # Install Zsh plugins from apt or git clone
+        local ZSH_PLUGINS_DIR="/usr/share"
+        local need_clone=false
+
+        # zsh-autosuggestions
+        if [[ -f "$ZSH_PLUGINS_DIR/zsh-autosuggestions/zsh-autosuggestions.zsh" ]]; then
+            success "zsh-autosuggestions already installed"
+        elif dpkg -s zsh-autosuggestions &>/dev/null 2>&1; then
+            success "zsh-autosuggestions already installed"
+        else
+            info "Installing zsh-autosuggestions..."
+            run_cmd sudo apt-get install -y zsh-autosuggestions 2>/dev/null || {
+                info "apt package not available, cloning from git..."
+                run_cmd sudo git clone https://github.com/zsh-users/zsh-autosuggestions "$ZSH_PLUGINS_DIR/zsh-autosuggestions"
+            }
+            success "zsh-autosuggestions installed"
+        fi
+
+        # zsh-syntax-highlighting
+        if [[ -f "$ZSH_PLUGINS_DIR/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]]; then
+            success "zsh-syntax-highlighting already installed"
+        elif dpkg -s zsh-syntax-highlighting &>/dev/null 2>&1; then
+            success "zsh-syntax-highlighting already installed"
+        else
+            info "Installing zsh-syntax-highlighting..."
+            run_cmd sudo apt-get install -y zsh-syntax-highlighting 2>/dev/null || {
+                info "apt package not available, cloning from git..."
+                run_cmd sudo git clone https://github.com/zsh-users/zsh-syntax-highlighting "$ZSH_PLUGINS_DIR/zsh-syntax-highlighting"
+            }
+            success "zsh-syntax-highlighting installed"
+        fi
+
+        ZSH_PATH="$(which zsh)"
+        if [[ "$SHELL" != "$ZSH_PATH" ]]; then
+            info "Setting Zsh as default shell..."
+            run_cmd chsh -s "$ZSH_PATH"
+            success "Default shell changed to Zsh"
+        else
+            success "Zsh is already the default shell"
+        fi
+    fi
+}
+
+case "$OS" in
+    macos)  install_shell_macos ;;
+    debian|wsl) install_shell_linux ;;
+esac
 
 # ─── Step 5: CLI Tools ──────────────────────────────────────────────
 echo ""
@@ -194,17 +456,131 @@ echo -e "${BOLD}═════════════════════�
 echo -e "${BOLD}  🛠  Step 5/8: CLI Tools${NC}"
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
 
-TOOLS=(bat eza fd ripgrep btop zoxide jq tldr git-delta lazygit fzf)
+install_cli_tools_macos() {
+    local TOOLS=(bat eza fd ripgrep btop zoxide jq tldr git-delta lazygit fzf)
+    for tool in "${TOOLS[@]}"; do
+        if brew list "$tool" &>/dev/null; then
+            success "$tool already installed"
+        else
+            info "Installing $tool..."
+            run_cmd brew install "$tool"
+            success "$tool installed"
+        fi
+    done
+}
 
-for tool in "${TOOLS[@]}"; do
-    if brew list "$tool" &>/dev/null; then
-        success "$tool already installed"
-    else
-        info "Installing $tool..."
-        brew install "$tool"
-        success "$tool installed"
+install_cli_tools_linux() {
+    # Tools available directly from apt (on modern Debian/Ubuntu)
+    local APT_TOOLS=(bat fd-find ripgrep btop zoxide jq fzf)
+
+    for tool in "${APT_TOOLS[@]}"; do
+        if dpkg -s "$tool" &>/dev/null 2>&1; then
+            success "$tool already installed"
+        else
+            info "Installing $tool..."
+            run_cmd sudo apt-get install -y "$tool"
+            success "$tool installed"
+        fi
+    done
+
+    # bat is installed as 'batcat' on Debian/Ubuntu — create symlink
+    if has_cmd batcat && ! has_cmd bat; then
+        info "Creating symlink: batcat → bat"
+        mkdir -p "$HOME/.local/bin"
+        run_cmd ln -sf "$(which batcat)" "$HOME/.local/bin/bat"
+        success "bat symlink created"
     fi
-done
+
+    # fd is installed as 'fdfind' on Debian/Ubuntu — create symlink
+    if has_cmd fdfind && ! has_cmd fd; then
+        info "Creating symlink: fdfind → fd"
+        mkdir -p "$HOME/.local/bin"
+        run_cmd ln -sf "$(which fdfind)" "$HOME/.local/bin/fd"
+        success "fd symlink created"
+    fi
+
+    # eza — may not be in apt on older distros, install from binary
+    if has_cmd eza; then
+        success "eza already installed"
+    else
+        info "Installing eza..."
+        if ! run_cmd sudo apt-get install -y eza 2>/dev/null; then
+            info "eza not in apt, installing from GitHub release..."
+            local EZA_URL
+            EZA_URL="$(curl -fsSL https://api.github.com/repos/eza-community/eza/releases/latest \
+                | grep 'browser_download_url.*eza_x86_64-unknown-linux-gnu.tar.gz' \
+                | head -1 | cut -d'"' -f4)"
+            if [[ -n "$EZA_URL" ]]; then
+                curl -fsSL "$EZA_URL" | tar xz -C /tmp
+                run_cmd sudo mv /tmp/eza /usr/local/bin/eza
+                success "eza installed from release"
+            else
+                warn "Could not install eza — skipping"
+            fi
+        else
+            success "eza installed"
+        fi
+    fi
+
+    # tldr — install via npm (tldr-pages) or pip; apt version may be outdated
+    if has_cmd tldr; then
+        success "tldr already installed"
+    else
+        info "Installing tldr..."
+        run_cmd sudo apt-get install -y tldr 2>/dev/null || {
+            warn "tldr not available via apt, will install via npm later"
+        }
+    fi
+
+    # git-delta — not in standard apt repos, install from GitHub
+    if has_cmd delta; then
+        success "git-delta already installed"
+    else
+        info "Installing git-delta from GitHub release..."
+        local DELTA_URL
+        DELTA_URL="$(curl -fsSL https://api.github.com/repos/dandavison/delta/releases/latest \
+            | grep 'browser_download_url.*delta.*amd64.deb' \
+            | head -1 | cut -d'"' -f4)"
+        if [[ -n "$DELTA_URL" ]]; then
+            local DELTA_TMP
+            DELTA_TMP="$(mktemp /tmp/delta-XXXXXX.deb)"
+            run_cmd curl -fsSL "$DELTA_URL" -o "$DELTA_TMP"
+            run_cmd sudo dpkg -i "$DELTA_TMP"
+            rm -f "$DELTA_TMP"
+            success "git-delta installed"
+        else
+            warn "Could not install git-delta — skipping"
+        fi
+    fi
+
+    # lazygit — not in standard apt repos, install from GitHub
+    if has_cmd lazygit; then
+        success "lazygit already installed"
+    else
+        info "Installing lazygit from GitHub release..."
+        local LAZYGIT_VERSION
+        LAZYGIT_VERSION="$(curl -fsSL https://api.github.com/repos/jesseduffield/lazygit/releases/latest \
+            | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')"
+        if [[ -n "$LAZYGIT_VERSION" ]]; then
+            local LAZYGIT_URL="https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_Linux_x86_64.tar.gz"
+            curl -fsSL "$LAZYGIT_URL" | tar xz -C /tmp lazygit
+            run_cmd sudo mv /tmp/lazygit /usr/local/bin/lazygit
+            success "lazygit installed"
+        else
+            warn "Could not install lazygit — skipping"
+        fi
+    fi
+
+    # Ensure ~/.local/bin is in PATH
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        export PATH="$HOME/.local/bin:$PATH"
+    fi
+}
+
+case "$OS" in
+    macos)      install_cli_tools_macos ;;
+    debian|wsl) install_cli_tools_linux ;;
+esac
 
 # ─── Step 6: Starship Prompt ────────────────────────────────────────
 echo ""
@@ -212,12 +588,20 @@ echo -e "${BOLD}═════════════════════�
 echo -e "${BOLD}  🚀 Step 6/8: Starship Prompt${NC}"
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
 
-if ! command -v starship &>/dev/null; then
-    info "Installing Starship..."
-    brew install starship
-    success "Starship installed"
-else
+if has_cmd starship; then
     success "Starship already installed"
+else
+    case "$OS" in
+        macos)
+            info "Installing Starship..."
+            run_cmd brew install starship
+            ;;
+        debian|wsl)
+            info "Installing Starship via official installer..."
+            run_cmd sh -c "$(curl -fsSL https://starship.rs/install.sh)" -- --yes
+            ;;
+    esac
+    success "Starship installed"
 fi
 
 # ─── Step 7: fnm + Node.js ──────────────────────────────────────────
@@ -226,22 +610,32 @@ echo -e "${BOLD}═════════════════════�
 echo -e "${BOLD}  🟢 Step 7/8: fnm + Node.js${NC}"
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
 
-if ! command -v fnm &>/dev/null; then
-    info "Installing fnm (Fast Node Manager)..."
-    brew install fnm
-    success "fnm installed"
-else
+if has_cmd fnm; then
     success "fnm already installed"
+else
+    case "$OS" in
+        macos)
+            info "Installing fnm (Fast Node Manager)..."
+            run_cmd brew install fnm
+            ;;
+        debian|wsl)
+            info "Installing fnm via official installer..."
+            run_cmd bash -c "$(curl -fsSL https://fnm.vercel.app/install)" -- --skip-shell
+            export PATH="$HOME/.local/share/fnm:$PATH"
+            ;;
+    esac
+    success "fnm installed"
 fi
 
 # Load fnm in current shell so we can install Node
-eval "$(fnm env --use-on-cd --shell bash)"
-
-info "Installing Node LTS..."
-fnm install --lts
-fnm default lts-latest
-fnm use lts-latest
-success "Node LTS installed and set as default"
+if has_cmd fnm; then
+    eval "$(fnm env --use-on-cd --shell bash)"
+    info "Installing Node LTS..."
+    run_cmd fnm install --lts
+    run_cmd fnm default lts-latest
+    run_cmd fnm use lts-latest
+    success "Node LTS installed and set as default"
+fi
 
 # ─── Step 8: Config Files ───────────────────────────────────────────
 echo ""
@@ -250,22 +644,51 @@ echo -e "${BOLD}  📦 Step 8/8: Deploying Configs${NC}"
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
 
 # --- Ghostty config ---
-GHOSTTY_CONFIG_DIR="$HOME/Library/Application Support/com.mitchellh.ghostty"
-mkdir -p "$GHOSTTY_CONFIG_DIR"
-if [[ -f "$GHOSTTY_CONFIG_DIR/config.ghostty" ]]; then
-    cp "$GHOSTTY_CONFIG_DIR/config.ghostty" "$GHOSTTY_CONFIG_DIR/config.ghostty.bak.$(date +%s)"
-    warn "Backed up existing Ghostty config"
-fi
-cp "$CONFIGS_DIR/ghostty.config" "$GHOSTTY_CONFIG_DIR/config.ghostty"
-success "Ghostty config deployed"
+deploy_ghostty_config() {
+    local ghostty_config_dir
+    case "$OS" in
+        macos)
+            ghostty_config_dir="$HOME/Library/Application Support/com.mitchellh.ghostty"
+            ;;
+        debian)
+            ghostty_config_dir="$HOME/.config/ghostty"
+            ;;
+        wsl)
+            info "Ghostty config: configure on the Windows side if using Ghostty for Windows."
+            info "Deploying Linux-side config to ~/.config/ghostty/ for reference."
+            ghostty_config_dir="$HOME/.config/ghostty"
+            ;;
+    esac
+
+    mkdir -p "$ghostty_config_dir"
+    if [[ -f "$ghostty_config_dir/config" ]] || [[ -f "$ghostty_config_dir/config.ghostty" ]]; then
+        local existing
+        existing="$(ls "$ghostty_config_dir"/config* 2>/dev/null | head -1)"
+        run_cmd cp "$existing" "${existing}.bak.$(date +%s)"
+        warn "Backed up existing Ghostty config"
+    fi
+
+    # macOS uses config.ghostty, Linux uses config
+    case "$OS" in
+        macos)
+            run_cmd cp "$CONFIGS_DIR/ghostty.config" "$ghostty_config_dir/config.ghostty"
+            ;;
+        debian|wsl)
+            run_cmd cp "$CONFIGS_DIR/ghostty.config" "$ghostty_config_dir/config"
+            ;;
+    esac
+    success "Ghostty config deployed"
+}
+
+deploy_ghostty_config
 
 # --- Starship config ---
 mkdir -p "$HOME/.config"
 if [[ -f "$HOME/.config/starship.toml" ]]; then
-    cp "$HOME/.config/starship.toml" "$HOME/.config/starship.toml.bak.$(date +%s)"
+    run_cmd cp "$HOME/.config/starship.toml" "$HOME/.config/starship.toml.bak.$(date +%s)"
     warn "Backed up existing starship.toml"
 fi
-cp "$CONFIGS_DIR/starship.toml" "$HOME/.config/starship.toml"
+run_cmd cp "$CONFIGS_DIR/starship.toml" "$HOME/.config/starship.toml"
 success "Starship config deployed"
 
 # --- Shell-specific config ---
@@ -275,26 +698,42 @@ if [[ "$SHELL_CHOICE" == "fish" ]]; then
     mkdir -p "$FISH_CONFIG_DIR"
 
     if [[ -f "$FISH_CONFIG_DIR/config.fish" ]]; then
-        cp "$FISH_CONFIG_DIR/config.fish" "$FISH_CONFIG_DIR/config.fish.bak.$(date +%s)"
+        run_cmd cp "$FISH_CONFIG_DIR/config.fish" "$FISH_CONFIG_DIR/config.fish.bak.$(date +%s)"
         warn "Backed up existing config.fish"
     fi
-    cp "$CONFIGS_DIR/config.fish" "$FISH_CONFIG_DIR/config.fish"
+
+    # Deploy platform-appropriate fish config
+    if [[ "$OS" == "macos" ]]; then
+        run_cmd cp "$CONFIGS_DIR/config.fish" "$FISH_CONFIG_DIR/config.fish"
+    else
+        # For Linux: use modified config without Homebrew paths
+        run_cmd cp "$CONFIGS_DIR/config.fish" "$FISH_CONFIG_DIR/config.fish"
+        # Patch: replace Homebrew paths with Linux equivalents
+        sed -i 's|/opt/homebrew/bin/starship|starship|g' "$FISH_CONFIG_DIR/config.fish"
+        sed -i 's|fish_add_path /opt/homebrew/bin|# PATH: system paths are used on Linux|g' "$FISH_CONFIG_DIR/config.fish"
+        # Fix pnpm path for Linux
+        sed -i 's|\$HOME/Library/pnpm|\$HOME/.local/share/pnpm|g' "$FISH_CONFIG_DIR/config.fish"
+    fi
     success "Fish config deployed"
 
     # Fish abbreviations
-    info "Setting up Fish abbreviations..."
-    fish -c '
-        abbr -a --global ls "eza --icons --group-directories-first"
-        abbr -a --global ll "eza -la --icons --group-directories-first"
-        abbr -a --global lt "eza --tree --icons --level=2"
-        abbr -a --global cat "bat"
-        abbr -a --global find "fd"
-        abbr -a --global grep "rg"
-        abbr -a --global top "btop"
-        abbr -a --global lg "lazygit"
-        abbr -a --global cd "z"
-    '
-    success "Fish abbreviations set"
+    if ! $DRY_RUN; then
+        info "Setting up Fish abbreviations..."
+        fish -c '
+            abbr -a --global ls "eza --icons --group-directories-first"
+            abbr -a --global ll "eza -la --icons --group-directories-first"
+            abbr -a --global lt "eza --tree --icons --level=2"
+            abbr -a --global cat "bat"
+            abbr -a --global find "fd"
+            abbr -a --global grep "rg"
+            abbr -a --global top "btop"
+            abbr -a --global lg "lazygit"
+            abbr -a --global cd "z"
+        '
+        success "Fish abbreviations set"
+    else
+        info "[DRY-RUN] Would set Fish abbreviations"
+    fi
 
     # Zoxide + fzf init for fish
     if ! grep -qF "zoxide" "$FISH_CONFIG_DIR/config.fish" 2>/dev/null; then
@@ -317,36 +756,85 @@ FISHEOF
     else
         success "Zoxide init already present"
     fi
+
+    # Add ~/.local/bin to fish PATH on Linux
+    if [[ "$OS" == "debian" || "$OS" == "wsl" ]]; then
+        if ! grep -qF '.local/bin' "$FISH_CONFIG_DIR/config.fish" 2>/dev/null; then
+            echo '' >> "$FISH_CONFIG_DIR/config.fish"
+            echo '# Local bin (Linux)' >> "$FISH_CONFIG_DIR/config.fish"
+            echo 'fish_add_path $HOME/.local/bin' >> "$FISH_CONFIG_DIR/config.fish"
+        fi
+    fi
 else
     # Zsh config
     if [[ -f "$HOME/.zshrc" ]]; then
-        cp "$HOME/.zshrc" "$HOME/.zshrc.bak.$(date +%s)"
+        run_cmd cp "$HOME/.zshrc" "$HOME/.zshrc.bak.$(date +%s)"
         warn "Backed up existing .zshrc"
     fi
-    cp "$CONFIGS_DIR/.zshrc" "$HOME/.zshrc"
+
+    if [[ "$OS" == "macos" ]]; then
+        run_cmd cp "$CONFIGS_DIR/.zshrc" "$HOME/.zshrc"
+    else
+        # Deploy and patch for Linux
+        run_cmd cp "$CONFIGS_DIR/.zshrc" "$HOME/.zshrc"
+
+        # Patch Homebrew paths → Linux paths
+        sed -i 's|export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:\$PATH"|# PATH — system paths on Linux\nexport PATH="$HOME/.local/bin:$PATH"|' "$HOME/.zshrc"
+
+        # Patch zsh plugin source paths
+        sed -i 's|/opt/homebrew/share/zsh-syntax-highlighting/|/usr/share/zsh-syntax-highlighting/|g' "$HOME/.zshrc"
+        sed -i 's|/opt/homebrew/share/zsh-autosuggestions/|/usr/share/zsh-autosuggestions/|g' "$HOME/.zshrc"
+        sed -i 's|/opt/homebrew/share/zsh-completions|/usr/share/zsh-completions|g' "$HOME/.zshrc"
+
+        # Patch pnpm path for Linux
+        sed -i 's|\$HOME/Library/pnpm|\$HOME/.local/share/pnpm|g' "$HOME/.zshrc"
+
+        # Add fnm path for Linux (installed to ~/.local/share/fnm)
+        if ! grep -qF '.local/share/fnm' "$HOME/.zshrc" 2>/dev/null; then
+            sed -i '/# ─── fnm/i # fnm binary path (Linux)\nexport PATH="$HOME/.local/share/fnm:$PATH"\n' "$HOME/.zshrc"
+        fi
+    fi
     success "Zsh config deployed"
 fi
 
 # ─── Git config for delta ────────────────────────────────────────────
-info "Configuring git-delta as git pager..."
-git config --global core.pager delta
-git config --global interactive.diffFilter "delta --color-only"
-git config --global delta.navigate true
-git config --global delta.dark true
-git config --global delta.line-numbers true
-git config --global delta.side-by-side true
-git config --global merge.conflictstyle diff3
-git config --global diff.colorMoved default
-success "git-delta configured"
+if has_cmd delta || $DRY_RUN; then
+    info "Configuring git-delta as git pager..."
+    run_cmd git config --global core.pager delta
+    run_cmd git config --global interactive.diffFilter "delta --color-only"
+    run_cmd git config --global delta.navigate true
+    run_cmd git config --global delta.dark true
+    run_cmd git config --global delta.line-numbers true
+    run_cmd git config --global delta.side-by-side true
+    run_cmd git config --global merge.conflictstyle diff3
+    run_cmd git config --global diff.colorMoved default
+    success "git-delta configured"
+fi
 
 # ─── Done! ───────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
-echo -e "${GREEN}${BOLD}  ✅ All done!${NC}"
+if $DRY_RUN; then
+    echo -e "${YELLOW}${BOLD}  ⚠  DRY-RUN complete — no changes were made${NC}"
+else
+    echo -e "${GREEN}${BOLD}  ✅ All done!${NC}"
+fi
 echo -e "${BOLD}══════════════════════════════════════════${NC}"
 echo ""
+echo -e "  ${BOLD}Platform:${NC} $OS"
+echo -e ""
 echo -e "  ${BOLD}Your terminal stack:${NC}"
-echo -e "    👻 Ghostty              — terminal emulator"
+case "$OS" in
+    macos)
+        echo -e "    👻 Ghostty              — terminal emulator"
+        ;;
+    debian)
+        echo -e "    👻 Ghostty              — terminal (install separately on Linux)"
+        ;;
+    wsl)
+        echo -e "    💻 Windows Terminal      — recommended for WSL"
+        ;;
+esac
 if [[ "$SHELL_CHOICE" == "fish" ]]; then
     echo -e "    🐟 Fish                 — shell"
 else
