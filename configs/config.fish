@@ -2,13 +2,22 @@ if status is-interactive
     # Commands to run in interactive sessions can go here
 end
 
-fish_add_path /opt/homebrew/bin
+# Homebrew (auto-detect Apple Silicon vs Intel)
+if test -d /opt/homebrew
+    fish_add_path /opt/homebrew/bin
+else if test -d /usr/local/Cellar
+    fish_add_path /usr/local/bin
+end
 
 # Starship prompt
-source (/opt/homebrew/bin/starship init fish --print-full-init | psub)
+if command -q starship
+    source (starship init fish --print-full-init | psub)
+end
 
-# fnm (Node version manager)
-fnm env --use-on-cd --shell fish | source
+# fnm (Node version manager) — only if installed
+if command -q fnm
+    fnm env --use-on-cd --shell fish | source
+end
 
 # SSH key switcher (fallback for multi-account setups)
 # Usage: set-ssh-key lewis-official-20260224

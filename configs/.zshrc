@@ -3,27 +3,41 @@
 # Powered by: Starship + zsh-autosuggestions + zsh-syntax-highlighting + fzf + fnm
 
 # ─── Homebrew ────────────────────────────────────────────────────────
-export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+if [[ -d /opt/homebrew ]]; then
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    BREW_PREFIX="/opt/homebrew"
+elif [[ -d /usr/local/Cellar ]]; then
+    export PATH="/usr/local/bin:/usr/local/sbin:$PATH"
+    BREW_PREFIX="/usr/local"
+else
+    BREW_PREFIX=""
+fi
 
 # ─── Starship prompt ────────────────────────────────────────────────
 eval "$(starship init zsh)"
 
 # ─── Zsh plugins (via Homebrew) ──────────────────────────────────────
 # Syntax highlighting (must be before autosuggestions for best results)
-if [[ -f /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
-    source /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+if [[ -n "$BREW_PREFIX" && -f "$BREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]]; then
+    source "$BREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+elif [[ -f /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
+    source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 fi
 
 # Autosuggestions (fish-like suggestions)
-if [[ -f /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
-    source /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+if [[ -n "$BREW_PREFIX" && -f "$BREW_PREFIX/share/zsh-autosuggestions/zsh-autosuggestions.zsh" ]]; then
+    source "$BREW_PREFIX/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+elif [[ -f /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
+    source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
     ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
     ZSH_AUTOSUGGEST_STRATEGY=(history completion)
 fi
 
 # Completions
-if [[ -f /opt/homebrew/share/zsh-completions ]]; then
-    fpath=(/opt/homebrew/share/zsh-completions $fpath)
+if [[ -n "$BREW_PREFIX" && -d "$BREW_PREFIX/share/zsh-completions" ]]; then
+    fpath=("$BREW_PREFIX/share/zsh-completions" $fpath)
+elif [[ -d /usr/share/zsh-completions ]]; then
+    fpath=(/usr/share/zsh-completions $fpath)
 fi
 autoload -Uz compinit && compinit
 
@@ -68,7 +82,9 @@ fi
 eval "$(zoxide init zsh)"
 
 # ─── fnm (Node version manager) ─────────────────────────────────────
-eval "$(fnm env --use-on-cd --shell zsh)"
+if command -v fnm &>/dev/null; then
+    eval "$(fnm env --use-on-cd --shell zsh)"
+fi
 
 # ─── SSH key switcher (fallback for multi-account setups) ────────────
 # Usage: set-ssh-key lewis-official-20260224

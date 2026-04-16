@@ -202,7 +202,12 @@ case "$OS" in
         if ! has_cmd brew; then
             info "Installing Homebrew..."
             run_cmd /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            eval "$(/opt/homebrew/bin/brew shellenv)"
+            # Auto-detect Homebrew prefix (Apple Silicon vs Intel)
+            if [[ -d /opt/homebrew ]]; then
+                eval "$(/opt/homebrew/bin/brew shellenv)"
+            elif [[ -d /usr/local/Homebrew ]]; then
+                eval "$(/usr/local/bin/brew shellenv)"
+            fi
             success "Homebrew installed"
         else
             success "Homebrew already installed"
@@ -656,7 +661,13 @@ if has_cmd fnm; then
     fi
 else
     echo ""
-    printf "  Install fnm + Node.js? (y/N): "
+    echo -e "  ${YELLOW}⚠ WARNING: fnm manages its own Node.js versions.${NC}"
+    echo -e "  ${YELLOW}  If you already have Node.js installed (e.g. via nvm, Homebrew, or system),${NC}"
+    echo -e "  ${YELLOW}  fnm may shadow your existing Node/npm and tools installed globally${NC}"
+    echo -e "  ${YELLOW}  (e.g. Claude Code, Codex CLI, pnpm global packages).${NC}"
+    echo -e "  ${YELLOW}  Only install fnm if you need to manage multiple Node versions.${NC}"
+    echo ""
+    printf "  Install fnm + Node.js? (y/N, default: N): "
     read -r INSTALL_FNM
     if [[ "$INSTALL_FNM" =~ ^[Yy]$ ]]; then
         case "$OS" in
@@ -805,23 +816,27 @@ if [[ "$SHELL_CHOICE" == "fish" ]]; then
     fi
     success "Fish config deployed"
 
-    # Fish abbreviations
-    if ! $DRY_RUN; then
-        info "Setting up Fish abbreviations..."
-        fish -c '
-            abbr -a --global ls "eza --icons --group-directories-first"
-            abbr -a --global ll "eza -la --icons --group-directories-first"
-            abbr -a --global lt "eza --tree --icons --level=2"
-            abbr -a --global cat "bat"
-            abbr -a --global find "fd"
-            abbr -a --global grep "rg"
-            abbr -a --global top "btop"
-            abbr -a --global lg "lazygit"
-            abbr -a --global cd "z"
-        '
-        success "Fish abbreviations set"
+    # Fish abbreviations (written to config.fish for Fish 3.x & 4.x compat)
+    if ! grep -qF 'abbr -a ls' "$FISH_CONFIG_DIR/config.fish" 2>/dev/null; then
+        info "Adding Fish abbreviations to config.fish..."
+        cat >> "$FISH_CONFIG_DIR/config.fish" << 'ABBREOF'
+
+# Abbreviations (compatible with Fish 3.x and 4.x)
+if status is-interactive
+    abbr -a ls "eza --icons --group-directories-first"
+    abbr -a ll "eza -la --icons --group-directories-first"
+    abbr -a lt "eza --tree --icons --level=2"
+    abbr -a cat "bat"
+    abbr -a find "fd"
+    abbr -a grep "rg"
+    abbr -a top "btop"
+    abbr -a lg "lazygit"
+    abbr -a cd "z"
+end
+ABBREOF
+        success "Fish abbreviations added to config.fish"
     else
-        info "[DRY-RUN] Would set Fish abbreviations"
+        success "Fish abbreviations already present"
     fi
 
     # Zoxide + fzf init for fish
